@@ -19,6 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "modbus_stm.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -40,8 +41,10 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
+
+PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
 
@@ -50,172 +53,15 @@ UART_HandleTypeDef huart3;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define SLAVE_ADD 0x01
-#define PUMP_OFF 		1	//PUMP IN OFF STATE
-#define PUMP_ON_SP_CN 	2	//PUMP ON AND IN SPEED CONTROL STATAE
-#define PUMP_ON_PC_CN	3	//PUMP ON AND IN PROCESS CONTROL STATE
-#define PUMP_ERROR_MODE 4	//PUMP IN ERROR MODE,GOTO PUMP_OFF STATE AND THEN TO ANY OTHER STATE
-#define PUMP_ON_SS_CN	7	//PUMP ON AND IN SPEED SAFETY CONTROL STATE
-#define PUMP_ON_PS_CN	8	//PUMP ON AND IN PROCESS CONTROL STATE
-
-#define SUCCESS 		1	//SUCCESSFULLY WRITTEN AND ACKNOWLEDGED DATA
-#define SOFT_ERROR		0	//ERROR IN WRITING DATA
-#define HARD_ERROR		2	//CHECK ERROR MAP FOR ERROR CODE AND COMPARE IN DOCUMENTATION
-
-uint8_t rec_data[30];
-uint8_t hold_reg_map[56]={0};
-uint8_t inp_reg_map[66]={0};
-int8_t write_reg_map[249]={-1};
-uint8_t error_map[2]={0};
-int status = 0;
-
-int READ_HOLDING_REG(uint8_t Add_HI,uint8_t Add_LO,uint8_t Num_reg_HI,uint8_t Num_reg_LO)
-{
-	uint8_t buff[6] = {SLAVE_ADD,0x03,Add_HI,Add_LO,Num_reg_HI,Num_reg_LO};
-	uint16_t N={Num_reg_HI||Num_reg_LO};
-
-
-	HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-	//HAL_UART_Transmit(&huart1,buff, sizeof(buff),500);
-	HAL_UART_Transmit(&huart3,buff, sizeof(buff),5000);
-	HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-
-
-	HAL_UART_Receive (&huart1, rec_data, 2*sizeof(N) , 5000);
-	if(rec_data[1] == 0x83)//error code returned check error map array for exact error
-	{
-		error_map[0] = rec_data[2];
-		return 2;
-	}
-	if(rec_data[1]==0x03)	// successfully transmitted command and successfully received data
-	{
-		uint16_t add_full = (Add_HI&0xFF00)||(Add_HI&0x00FF);
-		add_full = add_full - 0x3FFF ;
-		for(int i=0;i<N;i++)
-		{
-			hold_reg_map[add_full] = rec_data[i+2];
-
-		}
-		return(1);
-	}
-	else
-		{
-			//HAL_UART_Transmit(&huart3,"error",6,500);
-			return(0);
-		}
-
-}
-
-int READ_INPUT_REG(uint8_t Add_HI,uint8_t Add_LO,uint8_t Num_reg)
-{
-		uint8_t buff[6] = {SLAVE_ADD,0x04,Add_HI,Add_LO,Num_reg};
-
-		HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-		HAL_UART_Transmit(&huart3,buff, sizeof(buff),500);
-		HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-
-		HAL_UART_Receive (&huart1, rec_data, Num_reg , 5000);
-		if(rec_data[1] == 0x84)
-			{
-				error_map[1] = rec_data[2];
-				return 2;
-			}
-		if(rec_data[1]==0x04)
-		{
-			uint16_t add_full = (Add_HI&0xFF00)||(Add_HI&0x00FF);
-			add_full = add_full - 0x3FE0 ;
-
-			for(int i=1;i<Num_reg;i++)
-			{
-				inp_reg_map[add_full] = rec_data[i+2];
-			}
-			return(1);
-
-		}
-		else
-			{
-				return(0);
-			}
-}
-
-int WRITE_SINGLE_REG(uint8_t Add_HI,uint8_t Add_LO,uint16_t value)
-{
-	uint8_t buff[] = {SLAVE_ADD,0x06,Add_HI,Add_LO,(value&0xFF00),(value&0x00FF)};
-
-	HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-	HAL_UART_Transmit(&huart3,buff,sizeof(buff),500);
-	HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-
-	HAL_UART_Receive(&huart1,rec_data,sizeof(buff)+2,5000);
-	if(rec_data[1] == 0x86)
-		{
-			error_map[2] = rec_data[2];
-			return 2;
-		}
-	if(rec_data[1]==0x06)
-	{
-		if(rec_data[2]==buff[2]&&rec_data[3]==buff[3]&&rec_data[4]==buff[4]&&rec_data[5]==buff[5])
-		{
-			return 1;
-		}
-		else return 2;
-	}
-	else
-		return 2;
-}
-
-int WRITE_MULTI_REG(uint8_t Add_HI, uint8_t Add_LO, uint8_t Num_of_reg_HI, uint8_t Num_of_reg_LO)
-{
-	uint8_t N = 2* (((Num_of_reg_HI&0xFF00)||(Num_of_reg_LO&0x00FF))&(0x00FF));
-	uint8_t multi_send[N];
-	for (int i=0;(write_reg_map[i]!=-1 || i<249);i++)
-	{
-		multi_send[i]=write_reg_map[i];
-	}
-	uint8_t buff[] = {SLAVE_ADD,0x10,Add_HI,Add_LO,Num_of_reg_HI,Num_of_reg_LO,N,multi_send};
-
-		HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-		HAL_UART_Transmit(&huart3,buff,sizeof(buff),500);
-		HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-
-		HAL_UART_Receive(&huart1,rec_data,6,5000);
-		if(rec_data[1] == 0x86)
-			{
-				error_map[3] = rec_data[2];
-				for(int k =0;k<249;k++)
-				write_reg_map[k]=-1;
-				return 2;
-			}
-		if(rec_data[1]==0x10)
-		{
-			if(rec_data[2]==buff[2]&&rec_data[3]==buff[3]&&rec_data[4]==buff[4]&&rec_data[5]==buff[5])
-			{
-				for(int k =0;k<249;k++)
-				write_reg_map[k]=-1;
-				return 1;
-			}
-			else
-				{
-				for(int k =0;k<249;k++)
-				write_reg_map[k]=-1;
-					return 2;
-				}
-		}
-		else
-		{
-			for(int k =0;k<249;k++)
-			write_reg_map[k]=-1;
-			return 2;
-		}
-}
 
 /* USER CODE END 0 */
 
@@ -247,8 +93,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART1_UART_Init();
   MX_USART3_UART_Init();
+  MX_USB_OTG_FS_PCD_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -260,25 +107,21 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  //char msg[]= "TESTING";
-	 // HAL_UART_Transmit(&huart3, "TEST", 4, HAL_MAX_DELAY);
-	 // HAL_UART_Transmit(&huart1, "TEST", 4, HAL_MAX_DELAY);
-	  int status = READ_HOLDING_REG(0x40,0x00,0x00,0x01);
-	  HAL_Delay(30000);
-	  status = READ_INPUT_REG(0x46,0x00,0x08);
-	  HAL_Delay(30000);
-	  status = WRITE_SINGLE_REG(0x40,0x32,0x4432);
-	  HAL_Delay(30000);
-	  write_reg_map[1] = 20;
-	  write_reg_map[2] = 30;
-	  write_reg_map[3] = 40;
-	  write_reg_map[4] = 50;
-	  write_reg_map[5] = 60;
-	  write_reg_map[6] = 70;
-	  write_reg_map[7] = 80;
-	  write_reg_map[8] = 90;
-	  status = WRITE_MULTI_REG(0x46,0x00,0x00,0x08);
-	  HAL_Delay(30000);
+	READ_HOLDING_REG(0x5B,0x00,0x00,0x00);
+	WRITE_SINGLE_REG(0X5B,0X00,0XED);
+	READ_HOLDING_REG(0x5B,0x00,0x00,0x00);
+	READ_INPUT_REG(0x5B,0x00,0x00,0x00);
+	READ_INPUT_REG(0x5B,0x00,0x00,0x50);
+	for(int k =0;k<80;k++)
+		write_reg_map[k]=54;
+	WRITE_MULTI_REG(0x5B,0x00,0x00,3);
+	READ_HOLDING_REG(0x5B,0x00,0x01,0x00);
+	CHANGE_STATE(2);
+	GET_STATE();
+	CHANGE_STATE(3);
+	GET_STATE();
+
+
   }
   /* USER CODE END 3 */
 }
@@ -291,15 +134,22 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 168;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -308,56 +158,47 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART3;
-  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
-  PeriphClkInit.Usart3ClockSelection = RCC_USART3CLKSOURCE_PCLK1;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
   }
 }
 
 /**
-  * @brief USART1 Initialization Function
+  * @brief USART2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART1_UART_Init(void)
+static void MX_USART2_UART_Init(void)
 {
 
-  /* USER CODE BEGIN USART1_Init 0 */
+  /* USER CODE BEGIN USART2_Init 0 */
 
-  /* USER CODE END USART1_Init 0 */
+  /* USER CODE END USART2_Init 0 */
 
-  /* USER CODE BEGIN USART1_Init 1 */
+  /* USER CODE BEGIN USART2_Init 1 */
 
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 57600;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_RS485Ex_Init(&huart1, UART_DE_POLARITY_HIGH, 0, 0) != HAL_OK)
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 57600;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
+  /* USER CODE BEGIN USART2_Init 2 */
 
-  /* USER CODE END USART1_Init 2 */
+  /* USER CODE END USART2_Init 2 */
 
 }
 
@@ -377,15 +218,13 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 38400;
+  huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
   huart3.Init.Mode = UART_MODE_TX_RX;
   huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
   if (HAL_UART_Init(&huart3) != HAL_OK)
   {
     Error_Handler();
@@ -397,17 +236,131 @@ static void MX_USART3_UART_Init(void)
 }
 
 /**
+  * @brief USB_OTG_FS Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USB_OTG_FS_PCD_Init(void)
+{
+
+  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
+
+  /* USER CODE END USB_OTG_FS_Init 0 */
+
+  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
+
+  /* USER CODE END USB_OTG_FS_Init 1 */
+  hpcd_USB_OTG_FS.Instance = USB_OTG_FS;
+  hpcd_USB_OTG_FS.Init.dev_endpoints = 4;
+  hpcd_USB_OTG_FS.Init.speed = PCD_SPEED_FULL;
+  hpcd_USB_OTG_FS.Init.dma_enable = DISABLE;
+  hpcd_USB_OTG_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
+  hpcd_USB_OTG_FS.Init.Sof_enable = ENABLE;
+  hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
+  hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
+  hpcd_USB_OTG_FS.Init.vbus_sensing_enable = ENABLE;
+  hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
+  if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
+
+  /* USER CODE END USB_OTG_FS_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOE_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : USER_Btn_Pin */
+  GPIO_InitStruct.Pin = USER_Btn_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(USER_Btn_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PF3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : RMII_MDC_Pin RMII_RXD0_Pin RMII_RXD1_Pin */
+  GPIO_InitStruct.Pin = RMII_MDC_Pin|RMII_RXD0_Pin|RMII_RXD1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : RMII_REF_CLK_Pin RMII_MDIO_Pin RMII_CRS_DV_Pin */
+  GPIO_InitStruct.Pin = RMII_REF_CLK_Pin|RMII_MDIO_Pin|RMII_CRS_DV_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
+  GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RMII_TXD1_Pin */
+  GPIO_InitStruct.Pin = RMII_TXD1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(RMII_TXD1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : USB_PowerSwitchOn_Pin */
+  GPIO_InitStruct.Pin = USB_PowerSwitchOn_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(USB_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : USB_OverCurrent_Pin */
+  GPIO_InitStruct.Pin = USB_OverCurrent_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : RMII_TX_EN_Pin RMII_TXD0_Pin */
+  GPIO_InitStruct.Pin = RMII_TX_EN_Pin|RMII_TXD0_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
 }
 
