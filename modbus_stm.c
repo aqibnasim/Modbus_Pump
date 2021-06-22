@@ -142,33 +142,37 @@ int WRITE_SINGLE_REG(uint8_t Add_HI,uint8_t Add_LO,uint16_t value)
 
 int WRITE_MULTI_REG(uint8_t Add_HI, uint8_t Add_LO, uint8_t Num_of_reg_HI, uint8_t Num_of_reg_LO)
 {
-/*	for(int k =0;k<255;k++)
+	for(int k =0;k<255;k++)
 	rec_data[k]=0;
-	uint8_t N = 2* (((Num_of_reg_HI&0xFF00)|(Num_of_reg_LO&0x00FF))&(0x00FF));
-	int k =0;
-	//uint8_t * multi_send = (uint8_t*) malloc(N * sizeof(uint8_t));   				//* multi_send = new uint8_t(N);
-	for (int i=0;(write_reg_map[i]!=-1 || i<249);i++)
+	uint8_t N =  2 * (((Num_of_reg_HI&0xFF00)|(Num_of_reg_LO&0x00FF))&(0x00FF));
+	uint8_t buff[255]={0};
+	buff[0]=SLAVE_ADD;
+	buff[1]=0x10;
+	buff[2]=Add_HI;
+	buff[3]=Add_LO;
+	buff[4]=Num_of_reg_HI;
+	buff[5]=Num_of_reg_LO;
+	buff[6]=N;
+	for (int i=7;(i<N+7);i++)
 	{
-		k++;
+		buff[i]=write_reg_map[i-7];
 	}
 
-	uint8_t buff[k+9] = {SLAVE_ADD,0x10,Add_HI,Add_LO,Num_of_reg_HI,Num_of_reg_LO,N,multi_send,0,0};
-	for (int i=0;i<k;i++)
-		{
-			buff[7+i]=;
-		}
+
 	uint16_t crc;
-	crc= MODBUS_CRC16(buff,sizeof(buff)-2);
-	buff[-1] =  *((uint8_t*)&(crc)+1); //high byte
-	buff[-2] =  *((uint8_t*)&(crc)+0); //low byte
-	Send_Data(buff,sizeof(buff));
-	Receive_data(sizeof(buff)+N+8);
-	free(multi_send);
+	crc= MODBUS_CRC16(buff,N+7);
+	buff[N+8] =  *((uint8_t*)&(crc)+1); //high byte
+	buff[N+7] =  *((uint8_t*)&(crc)+0); //low byte
+	Send_Data(buff,N+9);
+	Receive_data(sizeof(buff));
+
+
 		if(rec_data[1] == 0x86)
 			{
 				error_map[3] = rec_data[2];
 				for(int k =0;k<249;k++)
 				write_reg_map[k]=-1;
+				//free(buff);
 				return 2;
 			}
 		if(rec_data[1]==0x10)
@@ -177,12 +181,14 @@ int WRITE_MULTI_REG(uint8_t Add_HI, uint8_t Add_LO, uint8_t Num_of_reg_HI, uint8
 			{
 				for(int k =0;k<249;k++)
 				write_reg_map[k]=-1;
+
 				return 1;
 			}
 			else
 				{
 				for(int k =0;k<249;k++)
 				write_reg_map[k]=-1;
+
 					return 2;
 				}
 		}
@@ -190,9 +196,10 @@ int WRITE_MULTI_REG(uint8_t Add_HI, uint8_t Add_LO, uint8_t Num_of_reg_HI, uint8
 		{
 			for(int k =0;k<249;k++)
 			write_reg_map[k]=-1;
+
 			return 2;
 		}
-*/}
+}
 
 uint8_t CHANGE_STATE(uint8_t next_state)
 {
