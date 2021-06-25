@@ -2,8 +2,8 @@
 #include "modbus_stm.h"
 
 uint8_t rec_data[255] = {0};
-uint8_t hold_reg_map[56]={0};
-uint8_t inp_reg_map[66]={0};
+uint16_t hold_reg_map[56]={0};
+uint16_t inp_reg_map[66]={0};
 int8_t write_reg_map[249]={-1};
 uint8_t error_map[3]={0};
 int status = 0;
@@ -56,11 +56,11 @@ int READ_HOLDING_REG(uint8_t Add_HI,uint8_t Add_LO,uint8_t Num_reg_HI,uint8_t Nu
 	}
 	if(rec_data[1]==0x03)	// successfully transmitted command and successfully received data
 	{
-		uint16_t add_full = (Add_HI&0xFF00)|(Add_LO&0x00FF);
+		uint16_t add_full = ((unsigned int)Add_HI << 8) + Add_LO;
 		add_full = add_full - 0x3FFF ;
-		for(int i=0;i<N;i++,add_full++)
+		for(int i=0;i<rec_data[2];i+=2,add_full++)
 		{
-			hold_reg_map[add_full] = rec_data[i+2];
+			hold_reg_map[add_full] = ((unsigned int)rec_data[i+3] << 8) + rec_data[i+4];
 
 		}
 		return(1);
@@ -76,6 +76,7 @@ int READ_HOLDING_REG(uint8_t Add_HI,uint8_t Add_LO,uint8_t Num_reg_HI,uint8_t Nu
 int READ_INPUT_REG(uint8_t Add_HI,uint8_t Add_LO,uint8_t Num_reg_HI,uint8_t Num_reg_LO)
 {
 		uint8_t buff[8] = {SLAVE_ADD,0x04,Add_HI,Add_LO,Num_reg_HI,Num_reg_LO,0,0};
+		//uint8_t buff[8] = {SLAVE_ADD,0x04,0x40,0x00, 0x00,0x23,0xA4,0x13};
 		uint16_t crc;
 		crc= MODBUS_CRC16(buff,sizeof(buff)-2);
 		buff[7] =  *((uint8_t*)&(crc)+1); //high byte
@@ -95,12 +96,12 @@ int READ_INPUT_REG(uint8_t Add_HI,uint8_t Add_LO,uint8_t Num_reg_HI,uint8_t Num_
 			}
 		if(rec_data[1]==0x04)
 		{
-			uint16_t add_full = (Add_HI&0xFF00)||(Add_HI&0x00FF);
+			uint16_t add_full = ((unsigned int)Add_HI << 8) + Add_LO;
 			add_full = add_full - 0x3FE0 ;
 
-			for(int i=1;i<N;i++)
+			for(int i=0;i<rec_data[2];i+=2,add_full++)
 			{
-				inp_reg_map[add_full] = rec_data[i+2];
+				inp_reg_map[add_full] = ((unsigned int)rec_data[i+3] << 8) + rec_data[i+4];
 			}
 			return(1);
 
@@ -144,7 +145,7 @@ int WRITE_MULTI_REG(uint8_t Add_HI, uint8_t Add_LO, uint8_t Num_of_reg_HI, uint8
 {
 	for(int k =0;k<255;k++)
 	rec_data[k]=0;
-	uint8_t N =  2 * (((Num_of_reg_HI&0xFF00)|(Num_of_reg_LO&0x00FF))&(0x00FF));
+	uint8_t N =  2 * (((unsigned int)Num_of_reg_HI << 8) + Num_of_reg_LO);
 	uint8_t buff[255]={0};
 	buff[0]=SLAVE_ADD;
 	buff[1]=0x10;
@@ -235,7 +236,7 @@ uint8_t CHANGE_STATE(uint8_t next_state)
 int GET_STATE()
 {
 	uint8_t	current_state;
-	READ_HOLDING_REG(0x40,0x00,0x00,0x00);
+	READ_HOLDING_REG(0x40,0x00,0x00,0x01);
 	current_state = hold_reg_map[1];
 	return current_state;
 }
@@ -243,18 +244,19 @@ int GET_STATE()
 void Send_Data(uint8_t * buff, uint8_t size)
 {
 	
-	HAL_GPIO_WritePin(GPIOF, GPIO_PIN_3, GPIO_PIN_SET);
-	HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET);
+	HAL_Delay(1);//Silence on channel required for 24ms for baud rate 57600//min silence 2ms
 	//HAL_UART_Transmit(&huart1,buff, sizeof(buff),500);
-	HAL_UART_Transmit(&huart2,buff, size,5000);
-	HAL_Delay(24);//Silence on channel required for 24ms for baud rate 57600
-	HAL_GPIO_WritePin(GPIOF, GPIO_PIN_3, GPIO_PIN_RESET);
+	//HAL_UART_Transmit(&huart3,0, size,1000);
+	HAL_UART_Transmit(&huart3,buff, size,1000);
+	HAL_Delay(1);//Silence on channel required for 24ms for baud rate 57600//min silence 2ms
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
 	
 }
 	
 void Receive_data(uint8_t size)
 {
-		HAL_UART_Receive (&huart2, rec_data, size , 500);
+		HAL_UART_Receive (&huart3, rec_data, size , 1000);
 }
 	
 	

@@ -22,8 +22,8 @@
 
 //GLOBAL VARIABLES
 uint8_t rec_data[255];		//ARRAY OF RECIEVED DATA FROM SLAVE
-uint8_t hold_reg_map[56];	//HOLDING REGISTERS ARRAY
-uint8_t inp_reg_map[66];	//INPUT REGISTERS ARRAY
+uint16_t hold_reg_map[56];	//HOLDING REGISTERS ARRAY
+uint16_t inp_reg_map[66];	//INPUT REGISTERS ARRAY
 int8_t write_reg_map[249];	//ARRAY TO WRITE TO MULTIPLE REGISTERS
 uint8_t error_map[3];		//ERROR MAPPED TO ERRORS RETURNED BY SLAVE, CHECK ARRAY FOR EXACT ERROR
 int status ;
